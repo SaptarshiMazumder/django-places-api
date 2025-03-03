@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 
 import requests
+import google.generativeai as genai
 
 from .models import SearchHistory, RecommendedPlace
 from .serializers import SearchHistorySerializer
@@ -37,6 +38,8 @@ class PlaceSearchView(APIView):
         # Call Google Places Text Search API to find places for the query near the location
         # google_api_key = getattr(settings, "GOOGLE_MAPS_API_KEY", None)
         google_api_key = settings.GOOGLE_MAPS_API_KEY
+        gemini_api_key = settings.GEMINI_API_KEY
+
         if not google_api_key:
             return Response({"error": "Server Google API key not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         places_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -104,31 +107,40 @@ class PlaceSearchView(APIView):
                         processed_places[idx]['distance_m'] = dist_m
                         processed_places[idx]['walking_time_min'] = int(dur_s // 60)
 
-        # Use Gemini AI for descriptions and best selection (simulated if no real API)
-        gemini_api_key = getattr(settings, "GEMINI_API_KEY", None)
+        # Use Gemini AI for descriptions and best selection
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel('gemini-2.0-flash-001')
+
         best_index = 0
-        highest_rating = -1
+        highest_score = -1
         for idx, place in enumerate(processed_places):
-            # Determine best by highest rating (as a placeholder for AI logic)
-            if place['rating'] and place['rating'] > highest_rating:
-                highest_rating = place['rating']; best_index = idx
-            # Generate a simple description and review summary for now
-            if place['name']:
-                place['description'] = (
-                    f"{place['name']} is a recommended place for {query}. "
-                    f"It has a rating of {place['rating']} based on {place['user_ratings_count']} reviews."
-                )
-                if place['rating'] and place['rating'] >= 4.5:
-                    place['review_summary'] = "Users give it outstanding reviews, praising its quality and experience."
-                elif place['rating'] and place['rating'] >= 4.0:
-                    place['review_summary'] = "Users give it very good reviews overall, with most customers being satisfied."
-                elif place['rating'] and place['rating'] >= 3.0:
-                    place['review_summary'] = "Reviews are mixed, with both positive feedback and some criticisms."
-                else:
-                    place['review_summary'] = "This place has below-average reviews from customers."
-            else:
-                place['description'] = "Details are unavailable for this place."
-                place['review_summary'] = ""
+            # Generate a description using Gemini
+            prompt_description = f"Write a short description for {place['name']} at {place['address']} based on the search query {query}."
+            try:
+                response_description = model.generate_content(prompt_description)
+                place['description'] = response_description.text
+            except Exception as e:
+                place['description'] = f"Failed to generate description: {e}"
+
+            # Generate a review summary using Gemini
+            prompt_review = f"Summarize the reviews for {place['name']} at {place['address']}."
+            try:
+                response_review = model.generate_content(prompt_review)
+                place['review_summary'] = response_review.text
+            except Exception as e:
+                place['review_summary'] = f"Failed to generate review summary: {e}"
+
+            # Determine the "best" place using Gemini
+            prompt_best = f"Give a score between 0 and 1 for {place['name']} at {place['address']} based on the search query {query}."
+            try:
+                response_best = model.generate_content(prompt_best)
+                score = float(response_best.text)
+                if score > highest_score:
+                    highest_score = score
+                    best_index = idx
+            except Exception as e:
+                print(f"Failed to get best score: {e}")
+
         # Mark the best place
         if 0 <= best_index < len(processed_places):
             processed_places[best_index]['is_best'] = True
