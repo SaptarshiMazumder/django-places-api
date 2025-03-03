@@ -11,6 +11,8 @@ from .models import SearchHistory, RecommendedPlace
 from .serializers import SearchHistorySerializer
 
 
+google_api_key = settings.GOOGLE_MAPS_API_KEY
+gemini_api_key = settings.GEMINI_API_KEY
 
 class PlaceSearchView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -37,8 +39,6 @@ class PlaceSearchView(APIView):
 
         # Call Google Places Text Search API to find places for the query near the location
         # google_api_key = getattr(settings, "GOOGLE_MAPS_API_KEY", None)
-        google_api_key = settings.GOOGLE_MAPS_API_KEY
-        gemini_api_key = settings.GEMINI_API_KEY
 
         if not google_api_key:
             return Response({"error": "Server Google API key not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -166,6 +166,12 @@ class PlaceSearchView(APIView):
             place_objects.append(place_obj)
         RecommendedPlace.objects.bulk_create(place_objects)
 
+        # Serialize the processed places
+        places_serializer = SearchHistorySerializer(search_record)
+        places_data = places_serializer.data
+
+        # Add the processed places to the response data
+        places_data['places'] = processed_places
+
         # Return the serialized data
-        data = SearchHistorySerializer(search_record).data
-        return Response(data, status=status.HTTP_200_OK)
+        return Response(places_data, status=status.HTTP_200_OK)
