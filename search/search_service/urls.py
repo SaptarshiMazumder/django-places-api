@@ -1,5 +1,5 @@
 """
-URL configuration for places_proj project.
+URL configuration for search_service project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/5.1/topics/http/urls/
@@ -19,5 +19,5 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('places_api.urls')),
+    path('api/', include('search_app.urls')),
 ]

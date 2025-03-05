@@ -35,7 +35,7 @@ class Migration(migrations.Migration):
                 ('distance_m', models.IntegerField(blank=True, null=True)),
                 ('walking_time_min', models.IntegerField(blank=True, null=True)),
                 ('is_best', models.BooleanField(default=False)),
-                ('search', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='places', to='places_api.searchhistory')),
+                ('search', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='places', to='search_app.searchhistory')),
             ],
         ),
     ]
