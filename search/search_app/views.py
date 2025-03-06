@@ -6,6 +6,7 @@ from rest_framework import status, permissions
 
 import requests
 import google.generativeai as genai
+import re
 
 from .models import SearchHistory, RecommendedPlace
 from django.contrib.auth.models import User
@@ -13,9 +14,8 @@ from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from .serializers import SearchHistorySerializer
+from .adapters import GooglePlacesAdapter, GoogleDistanceMatrixAdapter
 
-
-google_api_key = settings.GOOGLE_MAPS_API_KEY
 gemini_api_key = settings.GEMINI_API_KEY
 
 @permission_classes([AllowAny])
@@ -41,21 +41,13 @@ class PlaceSearchView(APIView):
             # For now, use a default location as a fallback.
             user_lat = 35.6895; user_lng = 139.6917  # Example: Tokyo coordinates
 
-        if not google_api_key:
-            return Response({"error": "Server Google API key not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        places_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-        params = {
-            'query': query,
-            'location': f"{user_lat},{user_lng}",
-            'radius': 5000,
-            'key': google_api_key
-        }
+        # Use Google Places Adapter
+        places_adapter = GooglePlacesAdapter()
         try:
-            resp = requests.get(places_url, params=params); data = resp.json()
-        except Exception as e:
+            results = places_adapter.search_places(query, f"{user_lat},{user_lng}")
+        except requests.exceptions.RequestException as e:
             return Response({"error": f"Places API request failed: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
 
-        results = data.get('results', [])
         if not results:
             return Response({"message": "No places found for the given query."}, status=status.HTTP_200_OK)
         top_results = results[:5]
@@ -85,20 +77,14 @@ class PlaceSearchView(APIView):
                 "is_best": False
             })
 
-        # Call Google Distance Matrix API for walking distances
+        # Use Google Distance Matrix Adapter
+        distance_matrix_adapter = GoogleDistanceMatrixAdapter()
         if destinations:
-            dist_url = "https://maps.googleapis.com/maps/api/distancematrix/json"
-            dist_params = {
-                'origins': f"{user_lat},{user_lng}",
-                'destinations': "|".join(destinations),
-                'mode': 'walking',
-                'units': 'metric',
-                'key': google_api_key
-            }
             try:
-                dm_resp = requests.get(dist_url, params=dist_params); dm_data = resp.json()
-            except Exception as e:
+                dm_data = distance_matrix_adapter.get_distances(f"{user_lat},{user_lng}", destinations)
+            except requests.exceptions.RequestException as e:
                 dm_data = {}
+
             if dm_data.get('status') == 'OK':
                 elements = dm_data.get('rows', [{}])[0].get('elements', [])
                 for idx, elem in enumerate(elements):
@@ -135,7 +121,12 @@ class PlaceSearchView(APIView):
             prompt_best = f"Give a score between 0 and 1 for {place['name']} at {place['address']} based on the search query {query}."
             try:
                 response_best = model.generate_content(prompt_best)
-                score = float(response_best.text)
+                # Extract the score using regex
+                match = re.search(r"score(?: of)?:\s*([0-9.]+)", response_best.text, re.IGNORECASE)
+                if match:
+                    score = float(match.group(1))
+                else:
+                    score = -1  # Default score if extraction fails
                 if score > highest_score:
                     highest_score = score
                     best_index = idx
